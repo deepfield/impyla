@@ -59,6 +59,10 @@ class NotSupportedError(DatabaseError):
     pass
 
 
+class TimeoutError(Error):
+    pass
+
+
 # RPC errors
 
 class RPCError(Error):

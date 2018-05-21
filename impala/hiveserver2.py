@@ -106,6 +106,7 @@ class HiveServer2Connection(Connection):
             When set to `False`, this flag will cause impyla not to attempt to
             fetch the message with a fetch call . In this case the query
             handle remains valid and impyla will raise an exception with a
+
             message of "Operation is in ERROR_STATE".
             The Default option is `True`.
 
@@ -208,7 +209,6 @@ class HiveServer2Cursor(Cursor):
     arraysize = property(get_arraysize, set_arraysize)
 
     @property
-    def buffersize(self):
         # this is for internal use.  it provides an alternate default value for
         # the size of the buffer, so that calling .next() will read multiple
         # rows into a buffer if arraysize hasn't been set.  (otherwise, we'd
@@ -276,7 +276,7 @@ class HiveServer2Cursor(Cursor):
         self._last_operation_string = None
         self._last_operation = None
 
-    def execute(self, operation, parameters=None, configuration=None):
+    def execute(self, operation, parameters=None, configuration=None, timeout=None):
         """Synchronously execute a SQL query.
 
         Blocks until results are available.
@@ -301,7 +301,7 @@ class HiveServer2Cursor(Cursor):
         self.execute_async(operation, parameters=parameters,
                            configuration=configuration)
         log.debug('Waiting for query to finish')
-        self._wait_to_finish()  # make execute synchronous
+        self._wait_to_finish(timeout=timeout)  # make execute synchronous
         log.debug('Query finished')
 
     def execute_async(self, operation, parameters=None, configuration=None):
@@ -363,7 +363,7 @@ class HiveServer2Cursor(Cursor):
         self._last_operation_active = True
         self._debug_log_state()
 
-    def _wait_to_finish(self):
+    def _wait_to_finish(self, timeout=None):
         # Prior to IMPALA-1633 GetOperationStatus does not populate errorMessage
         # in case of failure. If not populated, queries that return results
         # can get a failure description with a further call to FetchResults rpc.
@@ -386,7 +386,10 @@ class HiveServer2Cursor(Cursor):
                         raise OperationalError("Operation is in ERROR_STATE")
             if not self._op_state_is_executing(operation_state):
                 break
-            time.sleep(self._get_sleep_interval(loop_start))
+            sleep_interval = self._get_sleep_interval(loop_start, timeout=timeout)
+            if sleep_interval <= 0:
+                raise TimeoutError('Operation timed out while waiting for operation to finish.')
+            time.sleep(sleep_interval)
 
     def status(self):
         return self._last_operation.get_status()
@@ -410,19 +413,22 @@ class HiveServer2Cursor(Cursor):
         return operation_state in (
             'PENDING_STATE', 'INITIALIZED_STATE', 'RUNNING_STATE')
 
-    def _get_sleep_interval(self, start_time):
+    def _get_sleep_interval(self, start_time, timeout=None):
         """Returns a step function of time to sleep in seconds before polling
         again. Maximum sleep is 1s, minimum is 0.1s"""
         elapsed = time.time() - start_time
         if elapsed < 0.05:
-            return 0.01
+            sleep_interval = 0.01
         elif elapsed < 1.0:
-            return 0.05
+            sleep_interval = 0.05
         elif elapsed < 10.0:
-            return 0.1
+            sleep_interval = 0.1
         elif elapsed < 60.0:
-            return 0.5
-        return 1.0
+            sleep_interval = 0.5
+        else:
+            sleep_interval = 1.0
+        timeout_sleep = max(elapsed - timeout, 0)
+        return min(timeout_sleep, sleep_interval)
 
     def executemany(self, operation, seq_of_parameters):
         # PEP 249
@@ -433,9 +439,9 @@ class HiveServer2Cursor(Cursor):
                 raise ProgrammingError("Operations that have result sets are "
                                        "not allowed with executemany.")
 
-    def fetchone(self):
+    def fetchone(self, timeout=None):
         # PEP 249
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
         if not self.has_result_set:
             raise ProgrammingError("Tried to fetch but no results.")
         log.debug('Fetching a single row')
@@ -473,9 +479,9 @@ class HiveServer2Cursor(Cursor):
            return None
 
 
-    def fetchmany(self, size=None):
+    def fetchmany(self, size=None, timeout=None):
         # PEP 249
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
         if not self.has_result_set:
             raise ProgrammingError("Tried to fetch but no results.")
         if size is None:
@@ -491,18 +497,18 @@ class HiveServer2Cursor(Cursor):
                 break
         return local_buffer
 
-    def fetchall(self):
+    def fetchall(self, timeout=None):
         # PEP 249
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
         log.debug('Fetching all result rows')
         try:
             return list(self)
         except StopIteration:
             return []
 
-    def fetchcolumnar(self):
+    def fetchcolumnar(self, timeout=None):
         """Executes a fetchall operation returning a list of CBatches"""
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
         if not self._last_operation.is_columnar:
             raise NotSupportedError("Server does not support columnar "
                                     "fetching")
@@ -572,17 +578,17 @@ class HiveServer2Cursor(Cursor):
         return build_summary_table(summary, idx, is_fragment_root,
                                    indent_level, output)
 
-    def get_databases(self):
+    def get_databases(self, timeout=None):
         def op():
             self._last_operation_string = "RPC_GET_DATABASES"
             self._last_operation = self.session.get_databases()
         self._execute_async(op)
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
 
     def database_exists(self, db_name):
         return self.session.database_exists(db_name)
 
-    def get_tables(self, database_name=None):
+    def get_tables(self, database_name=None, timeout=None):
         if database_name is None:
             database_name = '.*'
 
@@ -591,7 +597,7 @@ class HiveServer2Cursor(Cursor):
             self._last_operation = self.session.get_tables(database_name)
 
         self._execute_async(op)
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
 
     def table_exists(self, table_name, database_name=None):
         if database_name is None:
@@ -599,7 +605,7 @@ class HiveServer2Cursor(Cursor):
         return self.session.table_exists(table_name,
                                          database=database_name)
 
-    def get_table_schema(self, table_name, database_name=None):
+    def get_table_schema(self, table_name, database_name=None, timeout=None):
         if database_name is None:
             database_name = '.*'
 
@@ -609,7 +615,7 @@ class HiveServer2Cursor(Cursor):
                 table_name, database_name)
 
         self._execute_async(op)
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
         results = self.fetchall()
         if len(results) == 0:
             # TODO: the error raised here should be different
@@ -627,7 +633,7 @@ class HiveServer2Cursor(Cursor):
                     database_name, table_name))
         return [(r[3], r[5]) for r in results]
 
-    def get_functions(self, database_name=None):
+    def get_functions(self, database_name=None, timeout=None):
         if database_name is None:
             database_name = '.*'
 
@@ -636,7 +642,7 @@ class HiveServer2Cursor(Cursor):
             self._last_operation = self.session.get_functions(database_name)
 
         self._execute_async(op)
-        self._wait_to_finish()
+        self._wait_to_finish(timeout=timeout)
 
 
 class HiveServer2DictCursor(HiveServer2Cursor):
