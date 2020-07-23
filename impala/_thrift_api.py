@@ -31,7 +31,7 @@ from impala.util import get_logger_and_init_null
 log = get_logger_and_init_null(__name__)
 
 
-if six.PY2:
+if six.PY2 or True:
     # pylint: disable=import-error,unused-import
     # import Apache Thrift code
     from thrift.transport.TSocket import TSocket
@@ -57,7 +57,7 @@ if six.PY2:
     from impala._thrift_gen.RuntimeProfile.ttypes import TRuntimeProfileFormat
 
 
-if six.PY3:
+if six.PY3 and False:
     # import thriftpy2 code
     from thriftpy2 import load
     from thriftpy2.thrift import TClient, TApplicationException

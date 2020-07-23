@@ -778,7 +778,7 @@ def connect(host, port, timeout=None, use_ssl=False, ca_cert=None,
                               auth_mechanism, user, password)
     transport.open()
     protocol = TBinaryProtocol(transport)
-    if six.PY2:
+    if six.PY2 or True:
         # ThriftClient == ImpalaHiveServer2Service.Client
         service = ThriftClient(protocol)
     elif six.PY3:
@@ -986,9 +986,9 @@ class ThriftRPC(object):
 
 
 def open_transport(transport):
-    if six.PY2 and not transport.isOpen():
+    if (six.PY2 or True) and not transport.isOpen():
         transport.open()
-    elif six.PY3 and not transport.is_open():
+    elif (six.PY3 and False) and not transport.is_open():
         transport.open()
 
 
