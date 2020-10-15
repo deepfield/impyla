@@ -814,7 +814,7 @@ def connect(host, port, timeout=None, use_ssl=False, ca_cert=None,
         elif six.PY3:
             try:
                 # thriftpy has a release where set_timeout is missing
-                sock.set_timeout(timeout)
+                sock.setTimeout(timeout)
             except AttributeError:
                 sock.socket_timeout = timeout
                 sock.connect_timeout = timeout
