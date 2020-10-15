@@ -765,7 +765,7 @@ def connect(host, port, timeout=None, use_ssl=False, ca_cert=None,
     
     if timeout is not None:
         timeout = timeout * 1000.  # TSocket expects millis
-    if six.PY2:
+    if six.PY2 or True:
         sock.setTimeout(timeout)
     elif six.PY3:
         try:
